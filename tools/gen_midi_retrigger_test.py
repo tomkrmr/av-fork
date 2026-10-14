@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Test3 retrigger/arp B à partir d'une copie épinglée de la page publiée.
+
+--base-page DIR --output-dir DIR --cycles SYX --syntakt SYX --model-tg DIR
+[--cross PREFIX] [--check]. Aucun firmware distribué, uniquement recette propre.
+La page de base est celle du commit7abbe84a9fae9c57a44128e4ed4dcbb0a48f0aa4.
+"""
+import argparse,hashlib,json,pathlib,re,html as html_lib
+import build,gen_midi_bank_bundle as bank,ref_mainos
+STAMP='2026-10-12-step-copy-popup'
+EN=('Hold a B-side step and press RECORD to copy it, or STOP to paste the copied step including its locks. COPY and PASTE confirmations use the stock popup. A-side steps remain unchanged. Hold a B-side trig and turn CHANCE to set its stock condition; DATA also edits the open stock Chance popup, which closes when the last held trig is released. BACK returns to the MIDI bank. Native probability, FILL, PRE, NEI, 1st and A:B choices are included. Hold PAGE for momentary FILL; native latched FILL is also read. Conditions apply only to B-side notes. An inherited condition uses 100 percent by default. Chance settings are RAM only. Hold a B-side trig and press DATA to cycle Note, Velocity and Length; turn DATA to edit. FUNC + RETRIG opens B-side Retrig Setup. Turn DATA to select a row, click to edit, '
+    'then turn to change it. A.On enables sequenced repeats; Rte selects their rate and Len '
+    'their duration (127 = INF). Arp selects UP, DOWN, UPDN, RAND, PLAY or OFF; Oct selects '
+    '1–4 octaves. With REC enabled, hold a step and press RETRIG twice to enable its retrigger; edit its settings there, then release the trig '
+    'after editing to retain it. Copy/paste carries these settings and locks; clear removes '
+    'step locks while retaining lane defaults, and repeating clear/paste restores Undo. '
+    'Deleting a step removes its locks. BACK retains the B-side and the keyboard stays active '
+    'behind the menu. This candidate tests sequenced retrigger/arp only: live keyboard retrigger '
+    'is unfinished, and V.Crv displays --- because velocity curves are not implemented yet. '
+    'Retrigger settings reset on project load and are not saved. Sequences and MIDI LFO '
+    'settings remain RAM only; restart before changing projects. Existing B-side controls, '
+    'Sequence Genie and LFO-to-CC remain included. 6-channel USB audio is optional. '
+    'New chance/retrigger/arp behavior is experimental and needs hardware testing.')
+FR=('Maintenez un pas B et appuyez sur RECORD pour le copier, STOP pour le coller avec ses locks. Confirmations COPY et PASTE dans le popup natif. Les pas A restent inchangés. Maintenez un trig B et tournez CHANCE pour choisir sa condition native ; DATA édite aussi la fenêtre Chance native, qui se ferme au relâchement du dernier trig maintenu. BACK revient à B. Probabilités, FILL, PRE, NEI, 1st et rapports A:B natifs inclus. PAGE maintenu active FILL momentané ; le latch FILL natif est lu aussi. Conditions limitées aux notes B ; héritage à 100 pour cent par défaut. Réglages en RAM seulement. Maintenez un trig côté B et cliquez DATA pour choisir Note, Vel ou Len ; tournez DATA pour éditer. FUNC + RETRIG ouvre Retrig Setup côté B. Tournez DATA pour choisir une ligne, cliquez '
+    'pour éditer puis tournez pour changer la valeur. A.On active les répétitions séquencées ; '
+    'Rte règle leur vitesse et Len leur durée (127 = INF). Arp choisit UP, DOWN, UPDN, RAND, '
+    'PLAY ou OFF ; Oct règle 1–4 octaves. REC actif : maintenez un pas et appuyez deux fois sur RETRIG pour activer son retrigger et éditer ses réglages, '
+    'puis relâchez-le après édition pour le conserver. Copier/coller transporte ces réglages '
+    'et locks ; clear retire les locks de pas en conservant les défauts de voie. Répéter '
+    'clear/paste restaure Undo. Supprimer un pas retire ses locks. BACK conserve B et le '
+    'clavier reste actif derrière le menu. Ce candidat teste le retrigger/arp séquencé seulement : '
+    'le retrigger live reste inachevé et V.Crv affiche --- car la courbe de vélocité reste '
+    'à raccorder. Les réglages retrigger sont réinitialisés au chargement du projet et ne sont '
+    'pas sauvegardés. Séquences et réglages LFO MIDI restent en RAM ; redémarrez avant de '
+    'changer de projet. Commandes B, Sequence Genie et LFO vers CC restent inclus. Audio USB '
+    '6 canaux facultatif. Nouvelles conditions/retrigger/arp expérimentaux, à tester sur matériel.')
+
+def replace_json(text,prefix,value):
+ start=text.index(prefix)+len(prefix)
+ _,length=json.JSONDecoder().raw_decode(text[start:])
+ return text[:start]+json.dumps(value,ensure_ascii=False,indent=1)+text[start+length:]
+
+def main():
+ ap=argparse.ArgumentParser(description=__doc__)
+ for name in ('base-page','output-dir','cycles','syntakt','model-tg'):ap.add_argument('--'+name,required=True)
+ ap.add_argument('--cross',default='m68k-elf-');ap.add_argument('--check',action='store_true');a=ap.parse_args()
+ base=pathlib.Path(a.base_page);out=pathlib.Path(a.output_dir)
+ stock=bank.main_os_from_syx(a.cycles)
+ tweak,chosen,image=bank.generate(stock,a.syntakt,a.model_tg,a.cross,True,True,True,7,True,False,True,True)
+ tweak['requires']=[x for x in tweak['requires'] if x!='6ch-usbup']
+ tweak['description']=['Retrigger/arp séquencé B, réglages et locks privés par pattern ; RAM seulement.',
+                       'Candidat Test3 ; live retrigger, courbe de vélocité et sauvegarde inachevés.']
+ without=[t for t in chosen if t['id']!='6ch-usbup']
+ alternate,_=build.apply_writes(stock,without+[tweak])
+ # USB6 n'ajoute aucune charge ; les mêmes parties append restent identiques.
+ assert [t['id'] for t in without if t.get('append')]==[t['id'] for t in chosen if t.get('append')]
+ alternate+=image[len(stock):]
+ refs={'+'.join([name for name in bank.IDS if name in {t['id'] for t in ts}]+[tweak['id']]):hashlib.sha256(img).hexdigest()
+       for ts,img in ((chosen,image),(without,alternate))}
+ mod={'w':hashlib.sha256(ref_mainos.writes_bytes(tweak)).hexdigest(),
+      'p':hashlib.sha256(image[int(tweak['append']['at'],16)-build.BASE:]).hexdigest()}
+ bundle=(base/'bundle.js').read_text()
+ bundle=replace_json(bundle,'window.MC_TWEAKS.tweaks.push(',tweak)
+ texts={'en':{'label':'MIDI OUT Bank — chance test','short':'Stock chance conditions and retrigger/arp locks. Experimental; RAM only.','desc':EN},
+        'fr':{'label':'Banque MIDI OUT — test chance','short':'Conditions chance natives et locks retrigger/arp. Expérimental ; RAM seulement.','desc':FR}}
+ bundle=replace_json(bundle,'const bankTexts = ',texts)
+ bundle=replace_json(bundle,'Object.assign(window.MCFlasherApp.REF_MODS, ',{tweak['id']:mod})
+ bundle=replace_json(bundle,'Object.assign(window.MCFlasherApp.REF_MAINOS, ',refs)
+ html=(base/'index.html').read_text()
+ html=re.sub(r'window.MC_BUILD\s*=\s*[^;]+;', 'window.MC_BUILD = '+json.dumps(STAMP)+';', html)
+ html=re.sub(r'(bundle\.js|builder\.js)\?v=[^"\s<]+',lambda m:m.group(1)+'?v='+STAMP,html)
+ builder=(base/'builder.js').read_text()
+ old='    return aplibPack(out);'
+ replacement='''    if (ap.compressed_hex !== undefined) {
+      const packed = fromHex(ap.compressed_hex);
+      const restored = aplibDepack(concat(new Uint8Array(8), packed)).data;
+      if (!eq(restored, out)) throw new Error("charge precompressee differente");
+      return packed;
+    }
+    return aplibPack(out);'''
+ if 'ap.compressed_hex' not in builder:
+  assert builder.count(old)==1;builder=builder.replace(old,replacement)
+ guide=(base/'guide.html').read_text()
+ section='<section id="midi-retrigger-test"><h2>Test3 — MIDI retrigger / arp</h2><p data-l="en">'+html_lib.escape(EN)+'</p><p data-l="fr">'+html_lib.escape(FR)+'</p></section>\n'
+ assert '</main>' in guide;guide=guide.replace('</main>',section+'</main>')
+ about=(base/'ABOUT.md').read_text()+'\n## '+STAMP+'\n\n'+EN+'\n\n'+FR+'\n'
+ files={'bundle.js':bundle,'index.html':html,'builder.js':builder,'ABOUT.md':about,'guide.html':guide,
+        'source/midi-retrigger.json':json.dumps(tweak,indent=1,ensure_ascii=False)+'\n'}
+ for name,body in files.items():
+  dest=out/name
+  if a.check:assert dest.read_text()==body,dest
+  else:dest.parent.mkdir(parents=True,exist_ok=True);dest.write_text(body)
+ print('ok : Test3 retrigger/arp, références avec/sans USB6, marge image',build.END_LIMIT-build.BASE-len(image),'octets')
+ print('SHA MAIN OS :',refs)
+if __name__=='__main__':main()

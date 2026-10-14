@@ -1,0 +1,17 @@
+# Ne JAMAIS versionner ni distribuer d'image firmware Elektron (originale ou modifiée)
+firmware/
+*.syx
+*.zip
+# Outils tiers clonés, sorties de build et captures audio
+vendor/
+build/
+*.wav
+# Environnement Python créé par flash.sh / flash.bat
+.venv/
+*_mod.syx
+__pycache__/
+*.pyc
+.DS_Store
+
+# Local Claude Code config
+.claude/
